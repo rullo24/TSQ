@@ -30,13 +30,13 @@ pub fn createTSQ(comptime T: type) type {
         // PUBLIC FUNC DECLARATIONS //
         //////////////////////////////
 
-        pub fn init(alloc: std.mem.Allocator, capacity: usize) Self {
-            if (.has_been_init == true) return error.Already_Initialised;
-
+        pub fn init(alloc: std.mem.Allocator, capacity: usize) !Self {
+            const buf_alloc = try alloc.alloc(?T, capacity);
+            @memset(buf_alloc, 0x0);
             return .{
                 .has_been_init = true,
                 .alloc_used = alloc,
-                .buffer = alloc.alloc(T, capacity),
+                .buffer = try alloc.alloc(?T, capacity),
                 .head_i = 0,
                 .tail_i = 0,
                 .count = 0,
@@ -50,7 +50,7 @@ pub fn createTSQ(comptime T: type) type {
 
         // add an item to the the back of the FILO
         pub fn push(self: *Self, value: T) !void {
-            if (.has_been_init == false) return error.Not_Initialised;
+            if (self.has_been_init == false) return error.Not_Initialised;
 
             // race condition prevention
             self.mutex.lock();
@@ -58,11 +58,11 @@ pub fn createTSQ(comptime T: type) type {
 
             // waiting until there is space in the buffer
             while (self.count >= self.capacity) {
-                self.cond_pop.wait(self.mutex); // waiting for removal of a value
+                self.cond_pop.wait(&self.mutex); // waiting for removal of a value
             }
 
             // only increment tail pointer if non-empty
-            if (self.isEmpty() != true) {
+            if (try self.isEmpty() != true) {
                 // if at "end" of buffer, act as circular slice --> next index at front (if avail)
                 if (self.tail_i == self.final_i) { // circular increment
                     if (self.head_i == 0) return error.Trying_To_Overwrite_FIFO_Value; // this should not ever trigger as we wait for an empty spot using mutex above
@@ -82,7 +82,7 @@ pub fn createTSQ(comptime T: type) type {
 
         // waits until the queue has an item available and then removes it from the queue before returning it
         pub fn pop(self: *Self) !T {
-            if (.has_been_init == false) return error.Not_Initialised;
+            if (self.has_been_init == false) return error.Not_Initialised;
             
             // race condition prevention
             self.mutex.lock();
@@ -90,28 +90,34 @@ pub fn createTSQ(comptime T: type) type {
 
             // waiting until there is a non-empty buffer
             while (self.count <= 0) {
-                self.cond_push.wait(self.mutex); // waiting for value to be added (signal)
+                self.cond_push.wait(&self.mutex); // waiting for value to be added (signal)
             }
         
-            // if empty buffer at this point --> throw error           
-            if (self.isEmpty() == true) unreachable;
-
             // incrementing head_i ptr (circular)
             const head_i_to_remove: usize = self.head_i;
-            if (self.head_i == self.final_i) { // circular increment
+            if (self.head_i == self.final_i and self.head_i != self.tail_i) { // circular increment
                 self.head_i = 0;
+            } else if (self.head_i == self.tail_i) {
+                self.head_i = self.head_i;
             } else { // non-circular increment
                 self.head_i += 1;
             }
         
             // popping from prev location and decreasing counter
-            self.buffer[head_i_to_remove] = null;
+            const opt_popped_val = self.buffer[head_i_to_remove];
+            if (opt_popped_val == null) return error.Null_Popped;
+
+            self.buffer[head_i_to_remove] = std.mem.zeroes(@TypeOf(self.buffer[head_i_to_remove]));
             self.count -= 1;
+
+            // throwing signal to any other threads that are waiting for non-full queue
+            self.cond_pop.signal();
+            return opt_popped_val.?; // checked for null in lines above
         }
 
         // returns the queue's front item w/o removing it
         pub fn peek(self: *Self) !T {
-            if (.has_been_init == false) return error.Not_Initialised;
+            if (self.has_been_init == false) return error.Not_Initialised;
 
             // race condition prevention
             self.mutex.lock();
@@ -119,7 +125,7 @@ pub fn createTSQ(comptime T: type) type {
 
             // waiting until there is a non-empty buffer
             while (self.count <= 0) {
-                self.cond_push.wait(self.mutex); // waiting for value to be added (signal)
+                self.cond_push.wait(&self.mutex); // waiting for value to be added (signal)
             }
  
             // throwing error if head contains a null (shouldn't be able to view a null)
@@ -129,7 +135,7 @@ pub fn createTSQ(comptime T: type) type {
 
         // returns the allocated size of the queue
         pub fn getCapacity(self: *Self) !usize {
-            if (.has_been_init == false) return error.Not_Initialised;
+            if (self.has_been_init == false) return error.Not_Initialised;
             
             // race condition prevention
             self.mutex.lock();
@@ -140,7 +146,7 @@ pub fn createTSQ(comptime T: type) type {
 
         // returns the num of items in the queue currently
         pub fn getSize(self: *Self) !usize {
-            if (.has_been_init == false) return error.Not_Initialised;
+            if (self.has_been_init == false) return error.Not_Initialised;
 
             // race condition prevention
             self.mutex.lock();
@@ -149,15 +155,38 @@ pub fn createTSQ(comptime T: type) type {
             return self.count;
         }
 
+        // prints the queue (good for debugging purposes)
+        pub fn printQueue(self: *Self) !void {
+            const stdout_writer = std.io.getStdOut().writer(); // stdout ptr
+            if (self.has_been_init == false) return error.Not_Initialised;
+
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+        
+            if (self.count == 0) {
+                try stdout_writer.print("Queue is empty.\n", .{});
+                return;
+            }
+        
+            // printing each value in the queue
+            try stdout_writer.print("Queue contents: ", .{});
+            for (0..self.capacity) |curr_i| {
+                try stdout_writer.print("{any} | ", .{self.buffer[curr_i]});
+            }
+            try stdout_writer.print("\n", .{});
+        }
+
         // clears all values that are currently in the queue --> if heap-alloc memory in queue, these are not free'd properly (must do this first)
         pub fn clear(self: *Self) !void {
-            if (.has_been_init == false) return error.Not_Initialised;
+            if (self.has_been_init == false) return error.Not_Initialised;
 
             // race condition prevention
             self.mutex.lock();
             defer self.mutex.unlock();
 
             // resetting obj fields --> memory of slice left unchanged (just not used)
+            @memset(self.buffer, 0x0);
             self.head_i = 0;
             self.tail_i = 0;
             self.count = 0;
@@ -165,11 +194,10 @@ pub fn createTSQ(comptime T: type) type {
 
         // destroys the queue and all associated memory
         pub fn deinit(self: *Self) !void {
-            if (.has_been_init == false) return error.Not_Initialised;
+            if (self.has_been_init == false) return error.Not_Initialised;
 
             // race condition prevention
             self.mutex.lock();
-            defer self.mutex.unlock();
 
             // deinit all memory
             self.alloc_used.free(self.buffer);
@@ -180,9 +208,10 @@ pub fn createTSQ(comptime T: type) type {
             self.count = 0;
             self.capacity = 0;
             self.final_i = 0;
-            self.mutex = undefined;
             self.cond_push = undefined;
             self.cond_pop = undefined;
+            self.mutex.unlock();
+            self.mutex = undefined;
 
             // setting the deinitialised flag
             self.has_been_init = false; 
@@ -199,23 +228,16 @@ pub fn createTSQ(comptime T: type) type {
         
         // will return a bool indicating an empty FIFO
         fn isEmpty(self: *Self) !bool {
-            if (.has_been_init == false) return error.Not_Initialised;
-            
-            // race condition prevention
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
+            if (self.has_been_init == false) return error.Not_Initialised;
+            // no race condition prevention
             return (self.count == 0); // will return true if empty
         }
 
         // will return a bool indicating a full FIFO
         fn isFull(self: *Self) !bool {
-            if (.has_been_init == false) return error.Not_Initialised;
+            if (self.has_been_init == false) return error.Not_Initialised;
 
-            // race condition prevention
-            self.mutex.lock();
-            defer self.mutex.unlock();
-
+            // no race condition prevention
             return (self.count >= self.capacity); // will return true if at capacity
         }
     };
