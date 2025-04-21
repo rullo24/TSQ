@@ -42,14 +42,6 @@ TSQ_QUEUE.clear() !void
 // Cleans up and releases all memory/resources associated with the queue.
 TSQ_QUEUE.deinit() !void
 
-//// Private/Internal Helpers
-
-// Returns true if the queue is currently empty. Uses internal locking.
-TSQ_QUEUE.isEmpty() !bool
-
-// Returns true if the queue has reached its capacity. Uses internal locking.
-TSQ_QUEUE.isFull() !bool
-
 //// Notes
 // - All queue operations are thread-safe.
 // - All public functions check for initialisation state.
