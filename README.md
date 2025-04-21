@@ -13,42 +13,42 @@ This combination of locking and condition-based waiting synchronises concurrent 
 ## API Layout
 ```zig
 // Creates a thread-safe FIFO queue type parameterized over `T`.
-createTSQ(T: type) type
+createTSQ(T: type) TSQ_QUEUE
 
 // Initializes the queue with a specified capacity.
 // - `alloc`: The allocator used to reserve memory.
 // - `capacity`: The maximum number of elements the queue can hold.
-TSQ.init(alloc: std.mem.Allocator, capacity: usize) TSQ
+TSQ_QUEUE.init(alloc: std.mem.Allocator, capacity: usize) TSQ
 
 // Adds an item to the queue. Blocks if the queue is full.
 // - `value`: The item to add to the queue.
-TSQ.push(value: T) !void
+TSQ_QUEUE.push(value: T) !void
 
 // Removes and returns the front item in the queue. Blocks if the queue is empty.
-TSQ.pop() !T
+TSQ_QUEUE.pop() !T
 
 // Returns the front item in the queue without removing it. Blocks if the queue is empty.
-TSQ.peek() !T
+TSQ_QUEUE.peek() !T
 
 // Returns the maximum number of items the queue can hold.
-TSQ.getCapacity() !usize
+TSQ_QUEUE.getCapacity() !usize
 
 // Returns the number of items currently in the queue.
-TSQ.getSize() !usize
+TSQ_QUEUE.getSize() !usize
 
 // Empties the queue. Does not free memory of heap-allocated objects within the queue (must be handled manually).
-TSQ.clear() !void
+TSQ_QUEUE.clear() !void
 
 // Cleans up and releases all memory/resources associated with the queue.
-TSQ.deinit() !void
+TSQ_QUEUE.deinit() !void
 
 //// Private/Internal Helpers
 
 // Returns true if the queue is currently empty. Uses internal locking.
-TSQ.isEmpty() !bool
+TSQ_QUEUE.isEmpty() !bool
 
 // Returns true if the queue has reached its capacity. Uses internal locking.
-TSQ.isFull() !bool
+TSQ_QUEUE.isFull() !bool
 
 //// Notes
 // - All queue operations are thread-safe.
