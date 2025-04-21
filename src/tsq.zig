@@ -1,0 +1,222 @@
+const std = @import("std");
+
+// FIFO thread-safe priority queue implementation
+pub fn createTSQ(comptime T: type) type {
+    return struct {
+
+        ////////////////////////
+        // FIELD DECLARATIONS //
+        ////////////////////////
+
+        // basic struct creation variables
+        const Self = @This();
+        has_been_init: bool = false,
+        alloc_used: std.mem.Allocator,
+
+        // queue variables
+        buffer: []?T,
+        head_i: usize,
+        tail_i: usize,
+        count: usize,
+        capacity: usize, // holds allocated size (num of T)
+        final_i: usize, // a simple way of referencing capacity in array syntax
+
+        // thread-relevant variable creation
+        mutex: std.Thread.Mutex, 
+        cond_push: std.Thread.Condition,
+        cond_pop: std.Thread.Condition,
+
+        //////////////////////////////
+        // PUBLIC FUNC DECLARATIONS //
+        //////////////////////////////
+
+        pub fn init(alloc: std.mem.Allocator, capacity: usize) Self {
+            if (.has_been_init == true) return error.Already_Initialised;
+
+            return .{
+                .has_been_init = true,
+                .alloc_used = alloc,
+                .buffer = alloc.alloc(T, capacity),
+                .head_i = 0,
+                .tail_i = 0,
+                .count = 0,
+                .capacity = capacity,
+                .final_i = (capacity - 1),
+                .mutex = std.Thread.Mutex{},
+                .cond_push = std.Thread.Condition{},
+                .cond_pop = std.Thread.Condition{},
+            };
+        }
+
+        // add an item to the the back of the FILO
+        pub fn push(self: *Self, value: T) !void {
+            if (.has_been_init == false) return error.Not_Initialised;
+
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // waiting until there is space in the buffer
+            while (self.count >= self.capacity) {
+                self.cond_pop.wait(self.mutex); // waiting for removal of a value
+            }
+
+            // only increment tail pointer if non-empty
+            if (self.isEmpty() != true) {
+                // if at "end" of buffer, act as circular slice --> next index at front (if avail)
+                if (self.tail_i == self.final_i) { // circular increment
+                    if (self.head_i == 0) return error.Trying_To_Overwrite_FIFO_Value; // this should not ever trigger as we wait for an empty spot using mutex above
+                    self.tail_i = 0;
+                } else { // non-circular increment
+                    self.tail_i += 1;
+                }
+            }
+            
+            // adding to new location and increasing counter
+            self.buffer[self.tail_i] = value;
+            self.count += 1;
+
+            // throwing signal to any threads waiting for value to be pushed
+            self.cond_push.signal();
+        }
+
+        // waits until the queue has an item available and then removes it from the queue before returning it
+        pub fn pop(self: *Self) !T {
+            if (.has_been_init == false) return error.Not_Initialised;
+            
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // waiting until there is a non-empty buffer
+            while (self.count <= 0) {
+                self.cond_push.wait(self.mutex); // waiting for value to be added (signal)
+            }
+        
+            // if empty buffer at this point --> throw error           
+            if (self.isEmpty() == true) unreachable;
+
+            // incrementing head_i ptr (circular)
+            const head_i_to_remove: usize = self.head_i;
+            if (self.head_i == self.final_i) { // circular increment
+                self.head_i = 0;
+            } else { // non-circular increment
+                self.head_i += 1;
+            }
+        
+            // popping from prev location and decreasing counter
+            self.buffer[head_i_to_remove] = null;
+            self.count -= 1;
+        }
+
+        // returns the queue's front item w/o removing it
+        pub fn peek(self: *Self) !T {
+            if (.has_been_init == false) return error.Not_Initialised;
+
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // waiting until there is a non-empty buffer
+            while (self.count <= 0) {
+                self.cond_push.wait(self.mutex); // waiting for value to be added (signal)
+            }
+ 
+            // throwing error if head contains a null (shouldn't be able to view a null)
+            return self.buffer[self.head_i] orelse return error.Peeked_Null_Ptr_When_Should_Be_Able_To; 
+            // returning non-ptr to avoid race conditions w/ free'd memory
+        }
+
+        // returns the allocated size of the queue
+        pub fn getCapacity(self: *Self) !usize {
+            if (.has_been_init == false) return error.Not_Initialised;
+            
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            return self.capacity;
+        }
+
+        // returns the num of items in the queue currently
+        pub fn getSize(self: *Self) !usize {
+            if (.has_been_init == false) return error.Not_Initialised;
+
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            return self.count;
+        }
+
+        // clears all values that are currently in the queue --> if heap-alloc memory in queue, these are not free'd properly (must do this first)
+        pub fn clear(self: *Self) !void {
+            if (.has_been_init == false) return error.Not_Initialised;
+
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // resetting obj fields --> memory of slice left unchanged (just not used)
+            self.head_i = 0;
+            self.tail_i = 0;
+            self.count = 0;
+        }
+
+        // destroys the queue and all associated memory
+        pub fn deinit(self: *Self) !void {
+            if (.has_been_init == false) return error.Not_Initialised;
+
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            // deinit all memory
+            self.alloc_used.free(self.buffer);
+            self.buffer = undefined;
+            self.alloc_used = undefined;
+            self.head_i = 0;
+            self.tail_i = 0;
+            self.count = 0;
+            self.capacity = 0;
+            self.final_i = 0;
+            self.mutex = undefined;
+            self.cond_push = undefined;
+            self.cond_pop = undefined;
+
+            // setting the deinitialised flag
+            self.has_been_init = false; 
+        }
+    
+        ///////////////////////////////
+        // PRIVATE FUNC DECLARATIONS //
+        ///////////////////////////////
+        
+        /// Some of these functions are private as to prevent race conditions
+        /// due to TSQ updates after a value is returned
+        /// i.e. queue returns (isFull == false) as it has one empty spot but 
+        /// then the spot is filled by the time the user attempts to .push()
+        
+        // will return a bool indicating an empty FIFO
+        fn isEmpty(self: *Self) !bool {
+            if (.has_been_init == false) return error.Not_Initialised;
+            
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            return (self.count == 0); // will return true if empty
+        }
+
+        // will return a bool indicating a full FIFO
+        fn isFull(self: *Self) !bool {
+            if (.has_been_init == false) return error.Not_Initialised;
+
+            // race condition prevention
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            return (self.count >= self.capacity); // will return true if at capacity
+        }
+    };
+}
