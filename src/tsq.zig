@@ -22,7 +22,7 @@ pub fn createTSQ(comptime T: type) type {
         final_i: usize, // a simple way of referencing capacity in array syntax
 
         // thread-relevant variable creation
-        mutex: std.Thread.Mutex, 
+        mutex: std.Thread.Mutex,
         cond_push: std.Thread.Condition,
         cond_pop: std.Thread.Condition,
 
@@ -31,8 +31,6 @@ pub fn createTSQ(comptime T: type) type {
         //////////////////////////////
 
         pub fn init(alloc: std.mem.Allocator, capacity: usize) !Self {
-            const buf_alloc = try alloc.alloc(?T, capacity);
-            @memset(buf_alloc, 0x0);
             return .{
                 .has_been_init = true,
                 .alloc_used = alloc,
@@ -71,7 +69,7 @@ pub fn createTSQ(comptime T: type) type {
                     self.tail_i += 1;
                 }
             }
-            
+
             // adding to new location and increasing counter
             self.buffer[self.tail_i] = value;
             self.count += 1;
@@ -83,7 +81,7 @@ pub fn createTSQ(comptime T: type) type {
         // waits until the queue has an item available and then removes it from the queue before returning it
         pub fn pop(self: *Self) !T {
             if (self.has_been_init == false) return error.Not_Initialised;
-            
+
             // race condition prevention
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -92,7 +90,7 @@ pub fn createTSQ(comptime T: type) type {
             while (self.count <= 0) {
                 self.cond_push.wait(&self.mutex); // waiting for value to be added (signal)
             }
-        
+
             // incrementing head_i ptr (circular)
             const head_i_to_remove: usize = self.head_i;
             if (self.head_i == self.final_i and self.head_i != self.tail_i) { // circular increment
@@ -102,7 +100,7 @@ pub fn createTSQ(comptime T: type) type {
             } else { // non-circular increment
                 self.head_i += 1;
             }
-        
+
             // popping from prev location and decreasing counter
             const opt_popped_val = self.buffer[head_i_to_remove];
             if (opt_popped_val == null) return error.Null_Popped;
@@ -127,16 +125,16 @@ pub fn createTSQ(comptime T: type) type {
             while (self.count <= 0) {
                 self.cond_push.wait(&self.mutex); // waiting for value to be added (signal)
             }
- 
+
             // throwing error if head contains a null (shouldn't be able to view a null)
-            return self.buffer[self.head_i] orelse return error.Peeked_Null_Ptr_When_Should_Be_Able_To; 
+            return self.buffer[self.head_i] orelse return error.Peeked_Null_Ptr_When_Should_Be_Able_To;
             // returning non-ptr to avoid race conditions w/ free'd memory
         }
 
         // returns the allocated size of the queue
         pub fn getCapacity(self: *Self) !usize {
             if (self.has_been_init == false) return error.Not_Initialised;
-            
+
             // race condition prevention
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -163,12 +161,12 @@ pub fn createTSQ(comptime T: type) type {
             // race condition prevention
             self.mutex.lock();
             defer self.mutex.unlock();
-        
+
             if (self.count == 0) {
                 try stdout_writer.print("Queue is empty.\n", .{});
                 return;
             }
-        
+
             // printing each value in the queue
             try stdout_writer.print("Queue contents: ", .{});
             for (0..self.capacity) |curr_i| {
@@ -214,18 +212,18 @@ pub fn createTSQ(comptime T: type) type {
             self.mutex = undefined;
 
             // setting the deinitialised flag
-            self.has_been_init = false; 
+            self.has_been_init = false;
         }
-    
+
         ///////////////////////////////
         // PRIVATE FUNC DECLARATIONS //
         ///////////////////////////////
-        
+
         /// Some of these functions are private as to prevent race conditions
         /// due to TSQ updates after a value is returned
-        /// i.e. queue returns (isFull == false) as it has one empty spot but 
+        /// i.e. queue returns (isFull == false) as it has one empty spot but
         /// then the spot is filled by the time the user attempts to .push()
-        
+
         // will return a bool indicating an empty FIFO
         fn isEmpty(self: *Self) !bool {
             if (self.has_been_init == false) return error.Not_Initialised;

@@ -1,6 +1,8 @@
 .{
-    .name = "TSQ",
-    .version = "1.0.0",
+    .name = .TSQ,
+    .version = "1.0.1",
+
+    .fingerprint = 0x190e308b6c6067b9,
 
     .dependencies = .{},
 
