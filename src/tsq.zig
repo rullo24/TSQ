@@ -30,6 +30,10 @@ pub fn createTSQ(comptime T: type) type {
         // PUBLIC FUNC DECLARATIONS //
         //////////////////////////////
 
+        /// inits a thread-safe queue with a fixed capacity.
+        /// PARAMS:
+        /// - alloc: Allocator used for memory allocation.
+        /// - capacity: Maximum number of items the queue can hold.
         pub fn init(alloc: std.mem.Allocator, capacity: usize) !Self {
             return .{
                 .has_been_init = true,
@@ -46,7 +50,10 @@ pub fn createTSQ(comptime T: type) type {
             };
         }
 
-        // add an item to the the back of the FILO
+        /// Adds an item to the back of the queue. If the queue is full, this function blocks until space becomes available.
+        /// PARAMS:
+        /// - self: The queue instance.
+        /// - value: The item to queue.
         pub fn push(self: *Self, value: T) !void {
             if (self.has_been_init == false) return error.Not_Initialised;
 
@@ -78,7 +85,9 @@ pub fn createTSQ(comptime T: type) type {
             self.cond_push.signal();
         }
 
-        // waits until the queue has an item available and then removes it from the queue before returning it
+        /// Removes and returns the front item from the queue. If the queue is empty, this function blocks until an item becomes available.
+        /// PARAMS:
+        /// - self: The queue instance.
         pub fn pop(self: *Self) !T {
             if (self.has_been_init == false) return error.Not_Initialised;
 
@@ -113,7 +122,9 @@ pub fn createTSQ(comptime T: type) type {
             return opt_popped_val.?; // checked for null in lines above
         }
 
-        // checks the queue and returns an available item or an error (if there in nothing in the current queue)
+        /// Attempts to remove and return the front item from the queue. Returns an error if the queue is currently empty.
+        /// PARAMS:
+        /// - self: The queue instance.
         pub fn tryPop(self: *Self) !T {
             if (self.has_been_init == false) return error.Not_Initialised;
             var l_mutex_unlocked: bool = false; // var to avoid double unlock on mutex
@@ -123,7 +134,7 @@ pub fn createTSQ(comptime T: type) type {
             errdefer if (l_mutex_unlocked == false) self.mutex.unlock(); // unlock mutex if not done so already
 
             // check if there is a valid item in queue, otherwise throw an error
-            if (self.getSize() == 0) return error.EMPTY_QUEUE;
+            if (self.count == 0) return error.EMPTY_QUEUE;
 
             // release mutex (will again be grabbed within .pop func)
             self.mutex.unlock();
@@ -132,7 +143,9 @@ pub fn createTSQ(comptime T: type) type {
             return self.pop(); // running pop as usual (value available)
         }
 
-        // returns the queue's front item w/o removing it
+        /// Returns the front item from the queue without removing it. Returns null if the queue is empty.
+        /// PARAMS:
+        /// - self: The queue instance.
         pub fn peek(self: *Self) !?T {
             if (self.has_been_init == false) return error.Not_Initialised;
 
@@ -147,7 +160,9 @@ pub fn createTSQ(comptime T: type) type {
             return self.buffer[self.head_i] orelse return error.Peeked_Null_Ptr_When_Should_Be_Able_To;
         }
 
-        // returns the allocated size of the queue
+        /// Returns the total holding capacity of the queue.
+        /// PARAMS:
+        /// - self: The queue instance.
         pub fn getCapacity(self: *Self) !usize {
             if (self.has_been_init == false) return error.Not_Initialised;
 
@@ -158,7 +173,9 @@ pub fn createTSQ(comptime T: type) type {
             return self.capacity;
         }
 
-        // returns the num of items in the queue currently
+        /// Returns the number of items currently in the queue.
+        /// PARAMS:
+        /// - self: The queue instance.
         pub fn getSize(self: *Self) !usize {
             if (self.has_been_init == false) return error.Not_Initialised;
 
@@ -169,7 +186,9 @@ pub fn createTSQ(comptime T: type) type {
             return self.count;
         }
 
-        // prints the queue (good for debugging purposes)
+        /// Prints the contents of the queue to stdout. Useful for debugging.
+        /// PARAMS:
+        /// - self: The queue instance.
         pub fn printQueue(self: *Self) !void {
             const stdout_writer = std.io.getStdOut().writer(); // stdout ptr
             if (self.has_been_init == false) return error.Not_Initialised;
@@ -191,7 +210,9 @@ pub fn createTSQ(comptime T: type) type {
             try stdout_writer.print("\n", .{});
         }
 
-        // clears all values that are currently in the queue --> if heap-alloc memory in queue, these are not free'd properly (must do this first)
+        /// Clears the queue by resetting indices and zeroing memory (user must handle allocated program-specific vars)
+        /// PARAMS:
+        /// - self: The queue instance.
         pub fn clear(self: *Self) !void {
             if (self.has_been_init == false) return error.Not_Initialised;
 
@@ -206,7 +227,9 @@ pub fn createTSQ(comptime T: type) type {
             self.count = 0;
         }
 
-        // destroys the queue and all associated memory
+        /// deinits the queue and frees all associated memory. After calling this, the queue must not be used again unless reinit.
+        /// PARAMS:
+        /// - self: The queue instance.
         pub fn deinit(self: *Self) !void {
             if (self.has_been_init == false) return error.Not_Initialised;
 
@@ -240,14 +263,18 @@ pub fn createTSQ(comptime T: type) type {
         /// i.e. queue returns (isFull == false) as it has one empty spot but
         /// then the spot is filled by the time the user attempts to .push()
 
-        // will return a bool indicating an empty FIFO
+        /// Returns true if the queue is empty. Intended for internal use only — not thread-safe when used externally.
+        /// PARAMS:
+        /// - self: The queue instance.
         fn isEmpty(self: *Self) !bool {
             if (self.has_been_init == false) return error.Not_Initialised;
             // no race condition prevention
             return (self.count == 0); // will return true if empty
         }
 
-        // will return a bool indicating a full FIFO
+        /// Returns true if the queue is full. Intended for internal use only — not thread-safe when used externally.
+        /// PARAMS:
+        /// - self: The queue instance.
         fn isFull(self: *Self) !bool {
             if (self.has_been_init == false) return error.Not_Initialised;
 
