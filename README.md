@@ -27,8 +27,11 @@ TSQ_QUEUE.push(value: T) !void
 // Removes and returns the front item in the queue. Blocks if the queue is empty.
 TSQ_QUEUE.pop() !T
 
-// Returns the front item in the queue without removing it. Blocks if the queue is empty.
-TSQ_QUEUE.peek() !T
+// Removes and returns the front item in the queue. Returns null if the queue is empty.
+TSQ_QUEUE.tryPop() !T
+
+// Returns the front item in the queue without removing it. Returns null if the queue is empty.
+TSQ_QUEUE.peek() !?T
 
 // Returns the maximum number of items the queue can hold.
 TSQ_QUEUE.getCapacity() !usize
