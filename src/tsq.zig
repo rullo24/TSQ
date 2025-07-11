@@ -113,8 +113,27 @@ pub fn createTSQ(comptime T: type) type {
             return opt_popped_val.?; // checked for null in lines above
         }
 
+        // checks the queue and returns an available item or an error (if there in nothing in the current queue)
+        pub fn tryPop(self: *Self) !T {
+            if (self.has_been_init == false) return error.Not_Initialised;
+            var l_mutex_unlocked: bool = false; // var to avoid double unlock on mutex
+
+            // grabbing mutex to check the queue without race conditions
+            self.mutex.lock();
+            errdefer if (l_mutex_unlocked == false) self.mutex.unlock(); // unlock mutex if not done so already
+
+            // check if there is a valid item in queue, otherwise throw an error
+            if (self.getSize() == 0) return error.EMPTY_QUEUE;
+
+            // release mutex (will again be grabbed within .pop func)
+            self.mutex.unlock();
+            l_mutex_unlocked = true; // to avoid double mutex unlock (on err below)
+            
+            return self.pop(); // running pop as usual (value available)
+        }
+
         // returns the queue's front item w/o removing it
-        pub fn peek(self: *Self) !T {
+        pub fn peek(self: *Self) !?T {
             if (self.has_been_init == false) return error.Not_Initialised;
 
             // race condition prevention
@@ -122,13 +141,10 @@ pub fn createTSQ(comptime T: type) type {
             defer self.mutex.unlock();
 
             // waiting until there is a non-empty buffer
-            while (self.count <= 0) {
-                self.cond_push.wait(&self.mutex); // waiting for value to be added (signal)
-            }
+            if (self.count == 0) return null;
 
             // throwing error if head contains a null (shouldn't be able to view a null)
             return self.buffer[self.head_i] orelse return error.Peeked_Null_Ptr_When_Should_Be_Able_To;
-            // returning non-ptr to avoid race conditions w/ free'd memory
         }
 
         // returns the allocated size of the queue
